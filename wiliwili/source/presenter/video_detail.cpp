@@ -350,7 +350,7 @@ void VideoDetail::requestCastVideoUrl(uint64_t oid, uint64_t cid, int type) {
             brls::Logger::error("{}", error);
             brls::sync([ASYNC_TOKEN, error]() {
                 ASYNC_RELEASE
-                APP_E->fire("CAST_URL_ERROR", nullptr);
+                APP_E->fire("CAST_URL_ERROR", error.empty() ? nullptr : (void*)error.c_str());
             });
         });
 }
@@ -521,11 +521,10 @@ void VideoDetail::requestVideoPageDetail(const std::string& bvid, uint64_t cid, 
     BILI::get_page_detail(
         bvid, cid,
         [ASYNC_TOKEN, requestVideoHistory](const bilibili::VideoPageResult& result) {
-#if defined(BOREALIS_USE_D3D11) || defined(BOREALIS_USE_OPENGL) && !defined(__PSV__)
+#ifdef DRAW_DANMAKU_MASK
             if (!result.mask_url.empty()) {
                 brls::Logger::debug("获取防遮挡数据: {}", result.mask_url);
-                auto url = pystring::startswith(result.mask_url, "//") ? "https:" + result.mask_url : result.mask_url;
-                DanmakuCore::instance().loadMaskData(url);
+                DanmakuCore::instance().loadMaskData(result.mask_url);
             }
 #endif
             brls::sync([ASYNC_TOKEN, result, requestVideoHistory]() {
@@ -569,8 +568,7 @@ void VideoDetail::requestVideoPageDetail(const std::string& bvid, uint64_t cid, 
 }
 
 /// 上报历史记录
-void VideoDetail::reportHistory(uint64_t aid, uint64_t cid, unsigned int progress, unsigned int duration,
-                                int type) {
+void VideoDetail::reportHistory(uint64_t aid, uint64_t cid, unsigned int progress, unsigned int duration, int type) {
     if (!REPORT_HISTORY) return;
     if (aid == 0 || cid == 0) return;
     brls::Logger::debug("reportHistory: aid{} cid{} progress{} duration{}", aid, cid, progress, duration);
@@ -616,7 +614,8 @@ void VideoDetail::beAgree(uint64_t aid) {
         [ASYNC_TOKEN](BILI_ERR) {
             // 请求失败 恢复默认状态
             brls::Logger::error("{}", error);
-            brls::sync([ASYNC_TOKEN]() {
+            brls::sync([ASYNC_TOKEN, error]() {
+                brls::Application::notify(error);
                 ASYNC_RELEASE
                 this->onVideoRelationInfo(videoRelation);
             });
@@ -649,6 +648,7 @@ void VideoDetail::addCoin(uint64_t aid, int num, bool like) {
             // 请求失败 恢复默认状态
             brls::Logger::error("{}", error);
             brls::sync([ASYNC_TOKEN, error]() {
+                brls::Application::notify(error);
                 ASYNC_RELEASE
                 // 投币达到上限
                 if (pystring::count(error, "34005")) videoRelation.coin = 2;
@@ -680,7 +680,8 @@ void VideoDetail::addResource(uint64_t aid, int type, bool isFavorite, std::stri
         [ASYNC_TOKEN](BILI_ERR) {
             // 请求失败 恢复默认状态
             brls::Logger::error("{}", error);
-            brls::sync([ASYNC_TOKEN]() {
+            brls::sync([ASYNC_TOKEN, error]() {
+                brls::Application::notify(error);
                 ASYNC_RELEASE
                 this->onVideoRelationInfo(videoRelation);
             });

@@ -87,7 +87,7 @@ public:
         container->setInFadeAnimation(true);
         brls::Application::pushActivity(new brls::Activity(container));
 
-        view->likeStateEvent.subscribe([this, item, index](bool value) {
+        view->likeStateEvent.subscribe([this, item, index](size_t value) {
             auto& itemData  = dataList[index - 2];
             itemData.action = value;
             item->setLiked(value);
@@ -252,12 +252,6 @@ void BasePlayerActivity::setCommonData() {
                              return true;
                          });
 
-    // 暂停
-    this->registerAction("toggle", brls::ControllerButton::BUTTON_SPACE, [this](...) -> bool {
-        this->video->togglePlay();
-        return true;
-    }, true);
-
     this->btnQR->getParent()->addGestureRecognizer(new brls::TapGestureRecognizer(this->btnQR->getParent()));
 
     this->btnAgree->getParent()->addGestureRecognizer(new brls::TapGestureRecognizer(this->btnAgree->getParent()));
@@ -322,12 +316,13 @@ void BasePlayerActivity::setCommonData() {
                     }
 
                     // 播放到一半没网时也会触发EOF，这里简单判断一下结束播放时的播放条位置是否在片尾或视频结尾附近
-                    if (fabs(duration - progress) > 5 && !(clipEnd > 0 && clipEnd - progress < 5)) {
+                    if ((duration - progress > 5 || progress - duration > 5) && !(clipEnd > 0 && clipEnd - progress < 5)) {
                         brls::Logger::error("EOF: video: {} duration: {} clipEnd: {}", progress, duration, clipEnd);
                         return;
                     }
                     if (PLAYER_STRATEGY == PlayerStrategy::LOOP) {
                         MPVCore::instance().seek(0);
+                        MPVCore::instance().resume();
                         return;
                     }
                     auto stack    = brls::Application::getActivitiesStack();
@@ -344,6 +339,9 @@ void BasePlayerActivity::setCommonData() {
                         APP_E->fire(VideoView::REPLAY, nullptr);
                     }
                 }
+                break;
+            case MpvEventEnum::RESTART:
+                this->updateVideoLink();
                 break;
             default:
                 break;
@@ -405,6 +403,26 @@ void BasePlayerActivity::showCoinDialog(uint64_t aid) {
     dialog->open();
 }
 
+void BasePlayerActivity::updateVideoLink() {
+    // 设置视频加载后跳转的时间
+    setProgress(MPVCore::instance().video_progress);
+
+    // dash
+    if (!this->videoUrlResult.dash.video.empty()) {
+        // dash格式的视频无需重复请求视频链接，这里简单的设置清晰度即可
+        videoUrlResult.quality = BasePlayerActivity::defaultQuality;
+        this->onVideoPlayUrl(videoUrlResult);
+        return;
+    }
+
+    // flv
+    if (dynamic_cast<PlayerSeasonActivity*>(this)) {
+        this->requestSeasonVideoUrl(episodeResult.bvid, episodeResult.cid);
+    } else {
+        this->requestVideoUrl(videoDetailResult.bvid, videoDetailPage.cid);
+    }
+}
+
 void BasePlayerActivity::setVideoQuality() {
     if (this->videoUrlResult.accept_description.empty()) return;
 
@@ -412,6 +430,11 @@ void BasePlayerActivity::setVideoQuality() {
         "wiliwili/player/quality"_i18n,
         [this](int selected) {
             int code                           = this->videoUrlResult.accept_quality[selected];
+#ifdef __PSV__
+            if (code > 64) {
+                code = 64;
+            }
+#endif
             BasePlayerActivity::defaultQuality = code;
             ProgramConfig::instance().setSettingItem(SettingItem::VIDEO_QUALITY, code);
 
@@ -421,24 +444,7 @@ void BasePlayerActivity::setVideoQuality() {
                 return;
             }
 
-            // 设置视频加载后跳转的时间
-            setProgress(MPVCore::instance().video_progress);
-
-            // dash
-            if (!this->videoUrlResult.dash.video.empty()) {
-                // dash格式的视频无需重复请求视频链接，这里简单的设置清晰度即可
-                videoUrlResult.quality = BasePlayerActivity::defaultQuality;
-                this->onVideoPlayUrl(videoUrlResult);
-                return;
-            }
-
-            // flv
-            auto self = dynamic_cast<PlayerSeasonActivity*>(this);
-            if (self) {
-                this->requestSeasonVideoUrl(episodeResult.bvid, episodeResult.cid);
-            } else {
-                this->requestVideoUrl(videoDetailResult.bvid, videoDetailPage.cid);
-            }
+            this->updateVideoLink();
         },
         getQualityIndex());
     auto* recycler = dropdown->getRecyclingList();
@@ -540,7 +546,15 @@ void BasePlayerActivity::onVideoPlayUrl(const bilibili::VideoUrlResult& result) 
 
         // 找到当前可用的清晰度
         for (const auto& i : result.dash.video) {
-            if (result.quality >= i.id) {
+            int desiredQuality = result.quality;
+            // 若设置了过高的清晰度, 自动切换到合适的清晰度, 默认为 128 (即无限制)
+            if (i.height > i.width) {
+                desiredQuality = std::min(desiredQuality, portraitQualityMax);
+            } else {
+                desiredQuality = std::min(desiredQuality, landscapeQualityMax);
+            }
+
+            if (desiredQuality >= i.id) {
                 videoUrlResult.quality = i.id;
                 break;
             }

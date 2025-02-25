@@ -3,6 +3,9 @@
 #include <algorithm>
 
 #include "fragment/inbox_chat.hpp"
+
+#include <utils/activity_helper.hpp>
+
 #include "view/inbox_msg_card.hpp"
 #include "view/custom_button.hpp"
 #include "utils/number_helper.hpp"
@@ -62,7 +65,20 @@ public:
 
     size_t getItemCount() override { return list.size(); }
 
-    void onItemSelected(RecyclingGrid* recycler, size_t index) override {}
+    void onItemSelected(RecyclingGrid* recycler, size_t index) override {
+        auto & r = this->list[index];
+        int source{};
+        if (r.content.at("source").is_number_integer())
+            source = r.content.at("source").get<int>();
+        if (r.msg_type == 7 && source == 5) {
+            // UGC video
+            std::string avid;
+            if (r.content.at("id").is_string())
+                avid = r.content.at("id").get<std::string>();
+            if (!avid.empty())
+                Intent::openAV(avid);
+        }
+    }
 
     bool appendData(const bilibili::InboxMessageResultWrapper& result) {
         bool skip_all = true;
@@ -148,7 +164,7 @@ bool InboxChat::toggleSend() {
 }
 
 void InboxChat::onError(const std::string& error) {
-    brls::Threading::sync([this, error]() { this->recyclingGrid->setError(error); });
+    this->recyclingGrid->setError(error);
 }
 
 void InboxChat::onMsgList(const bilibili::InboxMessageResultWrapper& result, bool refresh) {
@@ -166,11 +182,11 @@ void InboxChat::onMsgList(const bilibili::InboxMessageResultWrapper& result, boo
             datasource = new DataSourceMsgList(result, this->talkerId);
             recyclingGrid->setDefaultCellFocus(datasource->getItemCount() - 1);
             recyclingGrid->setDataSource(datasource);
-            brls::sync([this]() { recyclingGrid->selectRowAt(recyclingGrid->getDefaultCellFocus(), true); });
+            recyclingGrid->selectRowAt(recyclingGrid->getDefaultCellFocus(), true);
         }
     });
 }
 
 void InboxChat::onSendMsg(const bilibili::InboxSendResult& result) {
-    brls::Threading::sync([this]() { this->recyclingGrid->forceRequestNextPage(); });
+    this->recyclingGrid->forceRequestNextPage();
 }
